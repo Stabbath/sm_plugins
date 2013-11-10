@@ -1,26 +1,27 @@
-
 #include <sourcemod>
 #include <builtinvotes>
 //get here: https://forums.alliedmods.net/showthread.php?t=162164
+
+#undef REQUIRE_PLUGIN
 #include <lgofnoc>
+#define REQUIRE_PLUGIN
 
 #define L4D_TEAM_SPECTATE	1
 #define MATCHMODES_PATH		"configs/matchmodes.txt"
 
-new Handle:g_hMatchVote = INVALID_HANDLE;
-new Handle:g_hResetMatchVote = INVALID_HANDLE;
+new Handle:g_hVote = INVALID_HANDLE;
 new Handle:g_hModesKV = INVALID_HANDLE;
 new Handle:g_hCvarPlayerLimit = INVALID_HANDLE;
-new Handle:g_hCvarResetTime = INVALID_HANDLE;
 new String:g_sCfg[32];
+new bool:g_bIsLgofnocAvailable;
 
 public Plugin:myinfo = 
 {
 	name = "Match Vote",
 	author = "vintik",
-	description = "!match !rmatch",
+	description = "!match !rmatch, updated for lgofnoc",
 	version = "1.2",
-	url = "https://github.com/thevintik/sm_plugins"
+	url = "https://bitbucket.org/vintik/various-plugins"
 }
 
 public OnPluginStart()
@@ -41,22 +42,33 @@ public OnPluginStart()
 	RegConsoleCmd("sm_match", MatchRequest);
 	RegConsoleCmd("sm_rmatch", MatchReset);
 	g_hCvarPlayerLimit = CreateConVar("sm_match_player_limit", "2", "Minimum # of players in game to start the vote", FCVAR_PLUGIN);
-	g_hCvarResetTime = CreateConVar("sm_match_reset_time", "60.0", "Automatically reset match mode if the server is empty during this time. Negative values disable this feature.", FCVAR_PLUGIN);
+	g_bIsLgofnocAvailable = LibraryExists("lgofnoc");
+}
+
+public OnLibraryRemoved(const String:name[])
+{
+	if (StrEqual(name, "lgofnoc")) g_bIsLgofnocAvailable = false;
+}
+ 
+public OnLibraryAdded(const String:name[])
+{
+	if (StrEqual(name, "lgofnoc")) g_bIsLgofnocAvailable = true;
 }
 
 public Action:MatchRequest(client, args)
 {
-	if (!client) return Plugin_Handled;
+	if ((!client) || (!g_bIsLgofnocAvailable)) return Plugin_Handled;
 	if (args > 0)
 	{
 		//config specified
-		decl String:sCfg[64], String:sBuffer[256];
+		decl String:sCfg[64], String:sName[64], String:sCfgPath[256];
 		GetCmdArg(1, sCfg, sizeof(sCfg));
-		BuildPath(Path_SM, sBuffer, sizeof(sBuffer), "../../cfg/lgofnoc/%s", sCfg);
-		if (DirExists(sBuffer))
+		BuildPath(Path_SM, sCfgPath, sizeof(sCfgPath), "../../cfg/lgofnoc/%s", sCfg);
+		if (DirExists(sCfgPath))
 		{
-			FindConfigName(sCfg, sBuffer, sizeof(sBuffer));
-			if (StartMatchVote(client, sBuffer))
+			if (!FindConfigName(sCfg, sName, sizeof(sName)))
+				strcopy(sName, sizeof(sName), sCfg);
+			if (StartMatchVote(client, sName))
 			{
 				strcopy(g_sCfg, sizeof(g_sCfg), sCfg);
 				//caller is voting for
@@ -82,7 +94,7 @@ bool:FindConfigName(const String:cfg[], String:name[], maxlength)
 				KvGetString(g_hModesKV, "name", name, maxlength);
 				return true;
 			}
-		} while (KvGotoNextKey(g_hModesKV));
+		} while (KvGotoNextKey(g_hModesKV, false));
 	}
 	return false;
 }
@@ -99,7 +111,7 @@ MatchModeMenu(client)
 		{
 			KvGetSectionName(g_hModesKV, sBuffer, sizeof(sBuffer));
 			AddMenuItem(hMenu, sBuffer, sBuffer);
-		} while (KvGotoNextKey(g_hModesKV));
+		} while (KvGotoNextKey(g_hModesKV, false));
 	}
 	DisplayMenu(hMenu, client, 20);
 }
@@ -170,7 +182,12 @@ bool:StartMatchVote(client, const String:cfgname[])
 		PrintToChat(client, "Match voting isn't allowed for spectators.");
 		return false;
 	}
-	if (!IsBuiltinVoteInProgress())//disregard sm_vote_delay
+	if (LGO_IsMatchModeLoaded())
+	{
+		PrintToChat(client, "Match vote cannot be started. Match is already running.");
+		return false;
+	}
+	if (IsNewBuiltinVoteAllowed())
 	{
 		new iNumPlayers;
 		decl iPlayers[MaxClients];
@@ -189,19 +206,12 @@ bool:StartMatchVote(client, const String:cfgname[])
 			return false;
 		}
 		new String:sBuffer[64];
-		g_hMatchVote = CreateBuiltinVote(VoteActionHandler, BuiltinVoteType_Custom_YesNo, BuiltinVoteAction_Cancel | BuiltinVoteAction_VoteEnd | BuiltinVoteAction_End);
-		if (LGO_IsMatchModeLoaded())
-		{
-			Format(sBuffer, sizeof(sBuffer), "Change config to '%s'?", cfgname);
-		}
-		else
-		{
-			Format(sBuffer, sizeof(sBuffer), "Load confogl '%s' config?", cfgname);
-		}
-		SetBuiltinVoteArgument(g_hMatchVote, sBuffer);
-		SetBuiltinVoteInitiator(g_hMatchVote, client);
-		SetBuiltinVoteResultCallback(g_hMatchVote, VoteResultHandler);
-		DisplayBuiltinVote(g_hMatchVote, iPlayers, iNumPlayers, 20);
+		g_hVote = CreateBuiltinVote(VoteActionHandler, BuiltinVoteType_Custom_YesNo, BuiltinVoteAction_Cancel | BuiltinVoteAction_VoteEnd | BuiltinVoteAction_End);
+		Format(sBuffer, sizeof(sBuffer), "Load lgofnoc '%s' config?", cfgname);
+		SetBuiltinVoteArgument(g_hVote, sBuffer);
+		SetBuiltinVoteInitiator(g_hVote, client);
+		SetBuiltinVoteResultCallback(g_hVote, MatchVoteResultHandler);
+		DisplayBuiltinVote(g_hVote, iPlayers, iNumPlayers, 20);
 		return true;
 	}
 	PrintToChat(client, "Match vote cannot be started now.");
@@ -214,8 +224,7 @@ public VoteActionHandler(Handle:vote, BuiltinVoteAction:action, param1, param2)
 	{
 		case BuiltinVoteAction_End:
 		{
-			g_hMatchVote = INVALID_HANDLE;
-			g_hResetMatchVote = INVALID_HANDLE;
+			g_hVote = INVALID_HANDLE;
 			CloseHandle(vote);
 		}
 		case BuiltinVoteAction_Cancel:
@@ -225,7 +234,7 @@ public VoteActionHandler(Handle:vote, BuiltinVoteAction:action, param1, param2)
 	}
 }
 
-public VoteResultHandler(Handle:vote, num_votes, num_clients, const client_info[][2], num_items, const item_info[][2])
+public MatchVoteResultHandler(Handle:vote, num_votes, num_clients, const client_info[][2], num_items, const item_info[][2])
 {
 	for (new i=0; i<num_items; i++)
 	{
@@ -233,18 +242,10 @@ public VoteResultHandler(Handle:vote, num_votes, num_clients, const client_info[
 		{
 			if (item_info[i][BUILTINVOTEINFO_ITEM_VOTES] > (num_clients / 2))
 			{
-				if (vote == g_hMatchVote)
-				{
-					DisplayBuiltinVotePass(vote, "Confogl is loading...");
-					ServerCommand("sm_forcematch %s", g_sCfg);
-					return;
-				}
-				else if (vote == g_hResetMatchVote)
-				{
-					DisplayBuiltinVotePass(vote, "Confogl is unloading...");
-					ServerCommand("sm_resetmatch");
-					return;
-				}
+				DisplayBuiltinVotePass(vote, "lgofnoc is loading...");
+				ServerCommand("sm_forcematch %s", g_sCfg);
+				ServerCommand("sm_fm %s", g_sCfg);
+				return;
 			}
 		}
 	}
@@ -253,7 +254,7 @@ public VoteResultHandler(Handle:vote, num_votes, num_clients, const client_info[
 
 public Action:MatchReset(client, args)
 {
-	if (!client) return Plugin_Handled;
+	if ((!client) || (!g_bIsLgofnocAvailable)) return Plugin_Handled;
 	//voting for resetmatch
 	StartResetMatchVote(client);
 	return Plugin_Handled;
@@ -288,35 +289,30 @@ StartResetMatchVote(client)
 			PrintToChat(client, "Resetmatch vote cannot be started. Not enough players.");
 			return;
 		}
-		g_hResetMatchVote = CreateBuiltinVote(VoteActionHandler, BuiltinVoteType_Custom_YesNo, BuiltinVoteAction_Cancel | BuiltinVoteAction_VoteEnd | BuiltinVoteAction_End);
-		SetBuiltinVoteArgument(g_hResetMatchVote, "Turn off confogl?");
-		SetBuiltinVoteInitiator(g_hResetMatchVote, client);
-		SetBuiltinVoteResultCallback(g_hResetMatchVote, VoteResultHandler);
-		DisplayBuiltinVote(g_hResetMatchVote, iPlayers, iNumPlayers, 20);
+		g_hVote = CreateBuiltinVote(VoteActionHandler, BuiltinVoteType_Custom_YesNo, BuiltinVoteAction_Cancel | BuiltinVoteAction_VoteEnd | BuiltinVoteAction_End);
+		SetBuiltinVoteArgument(g_hVote, "Turn off lgofnoc?");
+		SetBuiltinVoteInitiator(g_hVote, client);
+		SetBuiltinVoteResultCallback(g_hVote, ResetMatchVoteResultHandler);
+		DisplayBuiltinVote(g_hVote, iPlayers, iNumPlayers, 20);
 		FakeClientCommand(client, "Vote Yes");
 		return;
 	}
 	PrintToChat(client, "Resetmatch vote cannot be started now.");
 }
 
-public Action:MatchResetTimer(Handle:timer)
+public ResetMatchVoteResultHandler(Handle:vote, num_votes, num_clients, const client_info[][2], num_items, const item_info[][2])
 {
-	for (new i=1; i<=MaxClients; i++)
+	for (new i=0; i<num_items; i++)
 	{
-		if(IsClientConnected(i) && !IsFakeClient(i))
+		if (item_info[i][BUILTINVOTEINFO_ITEM_INDEX] == BUILTINVOTES_VOTE_YES)
 		{
-			return Plugin_Handled;
+			if (item_info[i][BUILTINVOTEINFO_ITEM_VOTES] > (num_clients / 2))
+			{
+				DisplayBuiltinVotePass(vote, "lgofnoc is unloading...");
+				ServerCommand("sm_resetmatch");
+				return;
+			}
 		}
 	}
-	ServerCommand("sm_resetmatch");
-	return Plugin_Handled;
-}
-
-public OnClientDisconnect(client)
-{
-	if(IsFakeClient(client) || !LGO_IsMatchModeLoaded())
-		return;
-	new Float:fResetTime = GetConVarFloat(g_hCvarResetTime);
-	if (fResetTime >= 0.0)
-		CreateTimer(fResetTime, MatchResetTimer);
+	DisplayBuiltinVoteFail(vote, BuiltinVoteFail_Loses);
 }
