@@ -196,7 +196,7 @@ bool:StartMatchVote(client, const String:cfgname[])
 		}
 		else
 		{
-			Format(sBuffer, sizeof(sBuffer), "Load confogl '%s' config?", cfgname);
+			Format(sBuffer, sizeof(sBuffer), "Load lgofnoc '%s' config?", cfgname);
 		}
 		SetBuiltinVoteArgument(g_hMatchVote, sBuffer);
 		SetBuiltinVoteInitiator(g_hMatchVote, client);
@@ -235,13 +235,13 @@ public VoteResultHandler(Handle:vote, num_votes, num_clients, const client_info[
 			{
 				if (vote == g_hMatchVote)
 				{
-					DisplayBuiltinVotePass(vote, "Confogl is loading...");
+					DisplayBuiltinVotePass(vote, "lgofnoc is loading...");
 					ServerCommand("sm_forcematch %s", g_sCfg);
 					return;
 				}
 				else if (vote == g_hResetMatchVote)
 				{
-					DisplayBuiltinVotePass(vote, "Confogl is unloading...");
+					DisplayBuiltinVotePass(vote, "lgofnoc is unloading...");
 					ServerCommand("sm_resetmatch");
 					return;
 				}
@@ -289,7 +289,7 @@ StartResetMatchVote(client)
 			return;
 		}
 		g_hResetMatchVote = CreateBuiltinVote(VoteActionHandler, BuiltinVoteType_Custom_YesNo, BuiltinVoteAction_Cancel | BuiltinVoteAction_VoteEnd | BuiltinVoteAction_End);
-		SetBuiltinVoteArgument(g_hResetMatchVote, "Turn off confogl?");
+		SetBuiltinVoteArgument(g_hResetMatchVote, "Turn off lgofnoc?");
 		SetBuiltinVoteInitiator(g_hResetMatchVote, client);
 		SetBuiltinVoteResultCallback(g_hResetMatchVote, VoteResultHandler);
 		DisplayBuiltinVote(g_hResetMatchVote, iPlayers, iNumPlayers, 20);
